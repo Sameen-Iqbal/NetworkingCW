@@ -188,7 +188,7 @@ public class Node implements NodeInterface {
         }
 
         //debug
-        //System.out.println("Not found locally, querying network");
+        //System.out.println("Not found locally, querying network");han
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
         //debug
@@ -358,14 +358,16 @@ public class Node implements NodeInterface {
 
     private void handleInfoMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
         System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + mess);
-        // Bootstrap by querying this node for its name
         String nodeAddress = senderAddress.getHostAddress() + ":" + senderPort;
         String tIDNew = generateTransactionID();
         String response = sendRequestWithRetries(tIDNew + " G ", senderAddress, senderPort);
         if (response != null && response.startsWith(tIDNew + " H ")) {
             String senderNodeName = response.substring(tIDNew.length() + 3).trim();
             keyValueStore.put("N:" + senderNodeName, nodeAddress);
-            System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
+            //System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
+            // Force a nearest request to discover more nodes
+            byte[] selfHash = HashID.computeHashID("N:" + nodeName);
+            findClosestAddresses(selfHash, 5, true); // Bootstrap with more nodes
         }
     }
 
