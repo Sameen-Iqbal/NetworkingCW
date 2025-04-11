@@ -288,13 +288,17 @@ public class Node implements NodeInterface {
         DatagramPacket packet = new DatagramPacket(requestData, requestData.length, address, port);
         byte[] buffer = new byte[1024];
         DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
+        String tID = request.substring(0, 2);
 
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             socket.send(packet);
             socket.setSoTimeout(TIMEOUT_MS);
             try {
                 socket.receive(responsePacket);
-                return new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
+                String response = new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
+                if (response.startsWith(tID)) { // Only accept matching tID
+                    return response;
+                }
             } catch (SocketTimeoutException e) {
                 System.out.println("Timeout from " + address + ":" + port + " on attempt " + (attempt + 1));
                 if (attempt < MAX_RETRIES - 1) Thread.sleep(TIMEOUT_MS);
@@ -302,7 +306,6 @@ public class Node implements NodeInterface {
         }
         return null;
     }
-
 
 
 
