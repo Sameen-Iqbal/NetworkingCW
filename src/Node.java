@@ -362,6 +362,8 @@ public class Node implements NodeInterface {
     }
 
     private void handleInfoMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        if (!senderAddress.getHostAddress().startsWith("10.216.34.")) return; // Ignore external nodes
+        System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + mess);
         System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + mess);
         String nodeAddress = senderAddress.getHostAddress() + ":" + senderPort;
         String tIDNew = generateTransactionID();
