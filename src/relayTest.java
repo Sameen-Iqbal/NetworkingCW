@@ -1,6 +1,7 @@
 import java.net.*;
 
 public class relayTest {
+    // test case for the relay
     public static void main(String[] args) throws Exception {
         System.out.println("Starting Relay Test...");
 
