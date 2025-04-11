@@ -8,7 +8,7 @@ public class RobustnessTest {
         node.setNodeName("N:test");
         node.openPort(20110);
 
-        InetAddress localhost = InetAddress.getByName("127.0.0.1");
+        InetAddress localhost = InetAddress.getByName("10.216.34.173");
 
         // Test 1: Malformed message (too short)
         node.receiveMessage("A ", localhost, 20111);

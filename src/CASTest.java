@@ -12,7 +12,7 @@ public class CASTest {
         node2.setNodeName("N:node2");
         node2.openPort(20111);
 
-        node1.write("N:node2", "127.0.0.1:20111");
+        node1.write("N:node2", "10.216.34.173");
 
         // Test 1: CAS on existing key
         node2.write("D:lock", "OldValue");

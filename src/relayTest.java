@@ -18,8 +18,8 @@ public class relayTest {
         target.openPort(20112);
 
         // Bootstrap
-        relay.write("N:target", "127.0.0.1:20112");
-        requester.write("N:relay", "127.0.0.1:20111");
+        relay.write("N:target", "10.216.34.173:20112");
+        requester.write("N:relay", "10.216.34.173:20111");
 
         // Test 1: Relay a Read Request
         target.write("D:secret", "Hidden Message");
@@ -30,7 +30,7 @@ public class relayTest {
         String relayMsg = tID + " V N:target " + innerMsg;
         DatagramSocket tempSocket = new DatagramSocket();
         byte[] data = relayMsg.getBytes("UTF-8");
-        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("127.0.0.1"), 20111);
+        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("10.216.34.173"), 20111);
         tempSocket.send(packet);
         tempSocket.close();
 
@@ -51,7 +51,7 @@ public class relayTest {
         String writeRelayMsg = writeTID + " V N:target " + writeInner;
         tempSocket = new DatagramSocket();
         data = writeRelayMsg.getBytes("UTF-8");
-        packet = new DatagramPacket(data, data.length, InetAddress.getByName("127.0.0.1"), 20111);
+        packet = new DatagramPacket(data, data.length, InetAddress.getByName("10.216.34.173"), 20111);
         tempSocket.send(packet);
         tempSocket.close();
 
