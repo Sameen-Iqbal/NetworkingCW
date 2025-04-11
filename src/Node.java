@@ -139,9 +139,9 @@ public class Node implements NodeInterface {
         String[] parts = nodeAddress.split(":");
         InetAddress address = InetAddress.getByName(parts[0]);
         int port = Integer.parseInt(parts[1]);
-        String txId = generateTransactionID();
-        String response = sendRequestWithRetries(txId + " G ", address, port);
-        return response != null && response.startsWith(txId + " H " + nodeName);
+        String tID = generateTransactionID();
+        String response = sendRequestWithRetries(tID + " G ", address, port);
+        return response != null && response.startsWith(tID + " H " + nodeName);
     }
     
     public void pushRelay(String nodeName) throws Exception {
@@ -152,25 +152,31 @@ public class Node implements NodeInterface {
         if (!relayStack.isEmpty()) relayStack.pop();
     }
 
+    // check exists
     public boolean exists(String key) throws Exception {
+        // First check locally
         if (keyValueStore.containsKey(key)) return true;
 
+        // If not found locally, check the network
+        // calculate the hash to find the closest nodes
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
         for (KeyValuePair node : closestNodes) {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            String txId = generateTransactionID();
-            String response = sendRequestWithRetries(txId + " E " + formatString(key), address, port);
+            String tID = generateTransactionID();
+            String response = sendRequestWithRetries(tID + " E " + formatString(key), address, port);
             if (response != null) {
-                if (response.startsWith(txId + " F Y")) return true;
-                if (response.startsWith(txId + " F N")) return false;
+                if (response.startsWith(tID + " F Y")) return true;
+                if (response.startsWith(tID + " F N")) return false;
             }
         }
         return false;
     }
-    
+
+
+    //read(key) Retrieves the value associated with the key, if it exists in the store
     public String read(String key) throws Exception {
         System.out.println("\n[Read Operation] Key: " + key);
 
@@ -181,20 +187,24 @@ public class Node implements NodeInterface {
 
         System.out.println("Not found locally, querying network");
         byte[] keyHash = HashID.computeHashID(key);
-        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3); // Increase to 5 for broader search
-        System.out.println("Closest nodes found: " + closestNodes.size());
+        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 4);
+        //debug
+        //System.out.println("Closest nodes found: " + closestNodes.size());
 
         String result = (!relayStack.isEmpty()) ? tryRelayRead(key, closestNodes) : tryDirectRead(key, closestNodes);
         if (result == null && closestNodes.size() > 0) {
-            // If initial attempt fails, force a broader nearest node query
-            System.out.println("Initial read failed, expanding search...");
-            closestNodes = findClosestAddresses(keyHash, 3, true); // Force refresh
+
+            // attempt again
+            //debug
+           // System.out.println("Initial read failed, expanding search...");
+            closestNodes = findClosestAddresses(keyHash, 3, true);
             result = tryDirectRead(key, closestNodes);
         }
 
         if (result != null) {
             keyValueStore.put(key, result);
-            System.out.println("SUCCESS: Retrieved " + key);
+            //debug
+            //System.out.println("SUCCESS: Retrieved " + key);
             return result;
         }
 
@@ -204,25 +214,29 @@ public class Node implements NodeInterface {
 
 
 
+    // different and more comprehensive read methods
+    // ive implemented it in a  way that each search becomes more
+    // searchable, so there is a longer timeout.
+
     private String tryDirectRead(String key, List<KeyValuePair> closestNodes) throws Exception {
         for (KeyValuePair node : closestNodes) {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            String txId = generateTransactionID();
-            String request = txId + " R " + formatString(key);
+            String tID = generateTransactionID();
+            String request = tID + " R " + formatString(key);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null) {
                 System.out.println("Response from " + address + ":" + port + ": " + response);
-                if (response.startsWith(txId + " S Y ")) {
+                if (response.startsWith(tID + " S Y ")) {
                     String value = extractValue(response, " S Y ");
                     if (value != null && !value.isEmpty()) {
                         System.out.println("Parsed value: " + value);
                         return value;
                     }
-                } else if (response.startsWith(txId + " S N ")) {
+                } else if (response.startsWith(tID + " S N ")) {
                     System.out.println("Key not found at node");
-                } else if (response.startsWith(txId + " S ? ")) {
+                } else if (response.startsWith(tID + " S ? ")) {
                     System.out.println("Node not responsible");
                 } else {
                     System.out.println("Unexpected response format");
@@ -238,15 +252,16 @@ public class Node implements NodeInterface {
         String innerMsg = generateTransactionID() + " R " + formatString(key);
         String request = innerMsg;
         for (String relay : relayStack) {
-            String txId = generateTransactionID();
-            request = txId + " V " + relay + " " + request;
+            String tID = generateTransactionID();
+            request = tID + " V " + relay + " " + request;
         }
         String[] parts = closestNodes.get(0).getValue().split(":");
         InetAddress address = InetAddress.getByName(parts[0]);
         int port = Integer.parseInt(parts[1]);
         String response = sendRequestWithRetries(request, address, port);
         if (response != null) {
-            System.out.println("Relay response from " + address + ":" + port + ": " + response);
+            //debug
+            //System.out.println("Relay response from " + address + ":" + port + ": " + response);
             if (response.contains(" S Y ")) {
                 String value = extractValue(response, " S Y ");
                 if (value != null && !value.isEmpty()) {
@@ -293,11 +308,11 @@ public class Node implements NodeInterface {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            String txId = generateTransactionID();
-            String request = txId + " W " + formatString(key) + formatString(value);
+            String tID = generateTransactionID();
+            String request = tID + " W " + formatString(key) + formatString(value);
             String response = sendRequestWithRetries(request, address, port);
-            if (response != null && (response.startsWith(txId + " X R") || response.startsWith(txId + " X A"))) {
-                System.out.println("Successfully wrote " + key + " to " + node.getValue());
+            if (response != null && (response.startsWith(tID + " X R") || response.startsWith(tID + " X A"))) {
+                // //debug System.out.println("Successfully wrote " + key + " to " + node.getValue());
                 success = true;
             }
         }
@@ -308,59 +323,60 @@ public class Node implements NodeInterface {
     private void processMessage(String message, InetAddress senderAddress, int senderPort) throws Exception {
         if (message.length() < 4) return;
         String[] parts = message.split(" ", 3);
-        String txId = parts[0];
+        String tID = parts[0];
         String type = parts[1];
-        String payload = parts.length > 2 ? parts[2] : "";
+        String mess = parts.length > 2 ? parts[2] : "";
 
+        // all cases
         switch (type) {
-            case "G": handleNameRequest(txId, senderAddress, senderPort); break;
-            case "H": handleNameResponse(txId, payload, senderAddress, senderPort); break;
-            case "N": handleNearestRequest(txId, payload, senderAddress, senderPort); break;
-            case "I": handleInfoMessage(txId, payload, senderAddress, senderPort); break; // New handler for I messages
-            case "V": handleRelayMessage(txId, payload, senderAddress, senderPort); break;
-            case "E": handleKeyExistenceRequest(txId, payload, senderAddress, senderPort); break;
-            case "R": handleReadRequest(txId, payload, senderAddress, senderPort); break;
-            case "W": handleWriteRequest(txId, payload, senderAddress, senderPort); break;
-            case "C": handleCASRequest(txId, payload, senderAddress, senderPort); break;
+            case "G": handleNameRequest(tID, senderAddress, senderPort); break;
+            case "H": handleNameResponse(tID, mess, senderAddress, senderPort); break;
+            case "N": handleNearestRequest(tID, mess, senderAddress, senderPort); break;
+            case "I": handleInfoMessage(tID, mess, senderAddress, senderPort); break;
+            case "V": handleRelayMessage(tID, mess, senderAddress, senderPort); break;
+            case "E": handleKeyExistenceRequest(tID, mess, senderAddress, senderPort); break;
+            case "R": handleReadRequest(tID, mess, senderAddress, senderPort); break;
+            case "W": handleWriteRequest(tID, mess, senderAddress, senderPort); break;
+            case "C": handleCASRequest(tID, mess, senderAddress, senderPort); break;
         }
     }
 
-    private void handleNameRequest(String txId, InetAddress address, int port) throws IOException {
-        String response = txId + " H " + nodeName;
+    private void handleNameRequest(String tID, InetAddress address, int port) throws IOException {
+        String response = tID + " H " + nodeName;
         sendResponse(response, address, port);
     }
 
-    private void handleNameResponse(String txId, String payload, InetAddress senderAddress, int senderPort) {
-        String senderNodeName = payload.trim();
+    private void handleNameResponse(String tID, String mess, InetAddress senderAddress, int senderPort) {
+        String senderNodeName = mess.trim();
         String nodeAddress = senderAddress.getHostAddress() + ":" + senderPort;
         keyValueStore.put("N:" + senderNodeName, nodeAddress);
     }
 
-    private void handleInfoMessage(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + payload);
+    private void handleInfoMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + mess);
         // Bootstrap by querying this node for its name
         String nodeAddress = senderAddress.getHostAddress() + ":" + senderPort;
-        String txIdNew = generateTransactionID();
-        String response = sendRequestWithRetries(txIdNew + " G ", senderAddress, senderPort);
-        if (response != null && response.startsWith(txIdNew + " H ")) {
-            String senderNodeName = response.substring(txIdNew.length() + 3).trim();
+        String tIDNew = generateTransactionID();
+        String response = sendRequestWithRetries(tIDNew + " G ", senderAddress, senderPort);
+        if (response != null && response.startsWith(tIDNew + " H ")) {
+            String senderNodeName = response.substring(tIDNew.length() + 3).trim();
             keyValueStore.put("N:" + senderNodeName, nodeAddress);
             System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
         }
     }
 
-    private void handleNearestRequest(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        byte[] targetHash = hexStringToByteArray(payload.trim());
+    private void handleNearestRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        byte[] targetHash = hexStringToByteArray(mess.trim());
         List<KeyValuePair> closest = findClosestAddresses(targetHash, 3);
-        StringBuilder response = new StringBuilder(txId + " O ");
+        StringBuilder response = new StringBuilder(tID + " O ");
         for (KeyValuePair pair : closest) {
             response.append(formatString(pair.getKey())).append(formatString(pair.getValue()));
         }
         sendResponse(response.toString(), senderAddress, senderPort);
     }
 
-    private void handleRelayMessage(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        String[] parts = payload.split(" ", 2);
+    private void handleRelayMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        String[] parts = mess.split(" ", 2);
         if (parts.length < 2) return;
         String targetNode = parts[0];
         String innerMessage = parts[1];
@@ -383,7 +399,7 @@ public class Node implements NodeInterface {
             try {
                 socket.receive(responsePacket);
                 String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
-                String relayResponse = txId + " " + response.split(" ", 2)[1];
+                String relayResponse = tID + " " + response.split(" ", 2)[1];
                 sendResponse(relayResponse, senderAddress, senderPort);
             } catch (SocketTimeoutException e) {
 
@@ -391,34 +407,34 @@ public class Node implements NodeInterface {
         }
     }
 
-    private void handleKeyExistenceRequest(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        String key = extractFormattedValue(payload);
+    private void handleKeyExistenceRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        String key = extractFormattedValue(mess);
         boolean exists = keyValueStore.containsKey(key);
         byte[] keyHash = HashID.computeHashID(key);
         boolean responsible = findClosestAddresses(keyHash, 3).stream().anyMatch(p -> p.getKey().equals("N:" + nodeName));
         char status = exists ? 'Y' : (responsible ? 'N' : '?');
-        String response = txId + " F " + status;
+        String response = tID + " F " + status;
         sendResponse(response, senderAddress, senderPort);
     }
 
-    private void handleReadRequest(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        String key = extractFormattedValue(payload);
+    private void handleReadRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        String key = extractFormattedValue(mess);
         boolean exists = keyValueStore.containsKey(key);
         byte[] keyHash = HashID.computeHashID(key);
         boolean responsible = findClosestAddresses(keyHash, 3).stream().anyMatch(p -> p.getKey().equals("N:" + nodeName));
         String response;
         if (exists) {
-            response = txId + " S Y " + formatString(keyValueStore.get(key));
+            response = tID + " S Y " + formatString(keyValueStore.get(key));
         } else if (responsible) {
-            response = txId + " S N " + formatString("");
+            response = tID + " S N " + formatString("");
         } else {
-            response = txId + " S ? " + formatString("");
+            response = tID + " S ? " + formatString("");
         }
         sendResponse(response, senderAddress, senderPort);
     }
 
-    private void handleWriteRequest(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        String[] parts = payload.split(" ", 4);
+    private void handleWriteRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        String[] parts = mess.split(" ", 4);
         if (parts.length < 4) return;
         String key = extractFormattedValue(parts[0] + " " + parts[1]);
         String value = extractFormattedValue(parts[2] + " " + parts[3]);
@@ -431,12 +447,12 @@ public class Node implements NodeInterface {
         } else {
             status = 'X';
         }
-        String response = txId + " X " + status;
+        String response = tID + " X " + status;
         sendResponse(response, senderAddress, senderPort);
     }
 
-    private void handleCASRequest(String txId, String payload, InetAddress senderAddress, int senderPort) throws Exception {
-        String[] parts = payload.split(" ", 6);
+    private void handleCASRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
+        String[] parts = mess.split(" ", 6);
         if (parts.length < 6) return;
         String key = extractFormattedValue(parts[0] + " " + parts[1]);
         String currentValue = extractFormattedValue(parts[2] + " " + parts[3]);
@@ -461,7 +477,7 @@ public class Node implements NodeInterface {
         } else {
             status = 'X';
         }
-        String response = txId + " D " + status;
+        String response = tID + " D " + status;
         sendResponse(response, senderAddress, senderPort);
     }
 
@@ -500,10 +516,10 @@ public class Node implements NodeInterface {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            String txId = generateTransactionID();
-            String request = txId + " N " + byteArrayToHexString(targetHashID);
+            String tID = generateTransactionID();
+            String request = tID + " N " + byteArrayToHexString(targetHashID);
             String response = sendRequestWithRetries(request, address, port);
-            if (response != null && response.startsWith(txId + " O ")) {
+            if (response != null && response.startsWith(tID + " O ")) {
                 String[] partsResponse = response.split(" ");
                 int i = 2;
                 while (i + 3 < partsResponse.length) {
@@ -601,15 +617,16 @@ public class Node implements NodeInterface {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            String txId = generateTransactionID();
-            String request = txId + " C " + formatString(key) + formatString(currentValue) + formatString(newValue);
+            String tID = generateTransactionID();
+            String request = tID + " C " + formatString(key) + formatString(currentValue) + formatString(newValue);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null) {
-                if (response.startsWith(txId + " D R") || response.startsWith(txId + " D A")) {
+                if (response.startsWith(tID + " D R") || response.startsWith(tID + " D A")) {
                     keyValueStore.put(key, newValue);
                     return true;
+
                 }
-                if (response.startsWith(txId + " D N")) return false;
+                if (response.startsWith(tID + " D N")) return false;
             }
         }
         return false;
