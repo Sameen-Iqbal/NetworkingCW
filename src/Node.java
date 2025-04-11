@@ -209,41 +209,70 @@ public class Node implements NodeInterface {
 
     //read(key) Retrieves the value associated with the key, if it exists in the store
     public String read(String key) throws Exception {
-        //debug - shows the verse number key
-        //System.out.println("\n[Read Operation] Key: " + key);
-
+        // First check local store
         if (keyValueStore.containsKey(key)) {
-            //debug
-            //System.out.println("Found in local store");
             return keyValueStore.get(key);
         }
 
-        //debug
-        //System.out.println("Not found locally, querying network");han
+        // If not found locally, query the network
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
-        //debug
-        //System.out.println("Closest nodes found: " + closestNodes.size());
 
-        String result = (!relayStack.isEmpty()) ? tryRelayRead(key, closestNodes) : tryDirectRead(key, closestNodes);
-        if (result == null && closestNodes.size() > 0) {
+        // Try direct reads first
+        for (KeyValuePair node : closestNodes) {
+            try {
+                String[] parts = node.getValue().split(":");
+                InetAddress address = InetAddress.getByName(parts[0]);
+                int port = Integer.parseInt(parts[1]);
+                String tID = generateTransactionID();
+                String request = tID + " R " + formatString(key);
+                String response = sendRequestWithRetries(request, address, port);
 
-            // attempt again
-            //debug
-           // System.out.println("Initial read failed, expanding search...");
-            closestNodes = findClosestAddresses(keyHash, 3, true);
-            result = tryDirectRead(key, closestNodes);
+                if (response != null && response.startsWith(tID + " S Y ")) {
+                    String value = extractValue(response, " S Y ");
+                    if (value != null) {
+                        // Cache the value locally
+                        keyValueStore.put(key, value);
+                        return value;
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Error reading from node " + node.getKey() + ": " + e.getMessage());
+            }
         }
 
-        if (result != null) {
-            keyValueStore.put(key, result);
-            //debug
-            //System.out.println("SUCCESS: Retrieved " + key);
-            return result;
+        // If direct reads fail, try with relay nodes if available
+        if (!relayStack.isEmpty()) {
+            String innerMsg = generateTransactionID() + " R " + formatString(key);
+            String request = innerMsg;
+
+            // Build relay message stack
+            for (String relay : relayStack) {
+                String tID = generateTransactionID();
+                request = tID + " V " + relay + " " + request;
+            }
+
+            // Send to closest node
+            if (!closestNodes.isEmpty()) {
+                KeyValuePair firstNode = closestNodes.get(0);
+                String[] parts = firstNode.getValue().split(":");
+                InetAddress address = InetAddress.getByName(parts[0]);
+                int port = Integer.parseInt(parts[1]);
+                String response = sendRequestWithRetries(request, address, port);
+
+                if (response != null && response.contains(" S Y ")) {
+                    String value = extractValue(response, " S Y ");
+                    if (value != null) {
+                        keyValueStore.put(key, value);
+                        return value;
+                    }
+                }
+            }
         }
 
-        System.out.println("Failed to read " + key + " after " + MAX_RETRIES + " attempts");
+        System.err.println("Failed to read " + key + " after multiple attempts");
         return null;
+
     }
 
 
