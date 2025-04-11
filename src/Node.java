@@ -105,9 +105,6 @@ public class Node implements NodeInterface {
     }
 
     public void openPort(int portNumber) throws Exception {
-        if (portNumber < 20110 || portNumber > 20130) {
-            throw new Exception("Port number must be between 20110 and 20130");
-        }
         try {
             socket = new DatagramSocket(portNumber);
         } catch (SocketException e) {
@@ -116,48 +113,20 @@ public class Node implements NodeInterface {
     }
 
     public void handleIncomingMessages(int delay) throws Exception {
+        //  buffer holds incoming data temporarily. stores the raw bytes of the UDP message.
         byte[] buffer = new byte[1024];
         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
         socket.setSoTimeout(delay == 0 ? Integer.MAX_VALUE : delay);
         long startTime = System.currentTimeMillis();
         while (delay == 0 || System.currentTimeMillis() - startTime < delay) {
             try {
-                socket.receive(packet);
+                // this is handling the message stage
+                socket.receive(packet); //// Waits for an incoming message
+                //extracting the message
                 String message = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
                 processMessage(message, packet.getAddress(), packet.getPort());
-                // Cleanup every few messages
-                if (new Random().nextInt(10) == 0) cleanupStore();
             } catch (SocketTimeoutException e) {
                 break;
-            }
-        }
-    }
-
-
-
-    private void migrateDataIfNeeded(String newNodeKey, String newNodeValue) throws Exception {
-        List<String> toMigrate = new ArrayList<>();
-        byte[] nodeHash = HashID.computeHashID(newNodeKey);
-        for (Map.Entry<String, String> entry : keyValueStore.entrySet()) {
-            if (!entry.getKey().startsWith("N:")) {
-                byte[] keyHash = HashID.computeHashID(entry.getKey());
-                List<KeyValuePair> closest = findClosestAddresses(keyHash, 3);
-                if (!closest.stream().anyMatch(p -> p.getKey().equals("N:" + nodeName)) &&
-                        closest.size() >= 3) {
-                    toMigrate.add(entry.getKey());
-                }
-            }
-        }
-        String[] parts = newNodeValue.split(":");
-        InetAddress address = InetAddress.getByName(parts[0]);
-        int port = Integer.parseInt(parts[1]);
-        for (String key : toMigrate) {
-            String value = keyValueStore.get(key);
-            String tID = generateTransactionID();
-            String request = tID + " W " + formatString(key) + formatString(value);
-            String response = sendRequestWithRetries(request, address, port);
-            if (response != null && (response.startsWith(tID + " X R") || response.startsWith(tID + " X A"))) {
-                keyValueStore.remove(key);
             }
         }
     }
@@ -209,70 +178,41 @@ public class Node implements NodeInterface {
 
     //read(key) Retrieves the value associated with the key, if it exists in the store
     public String read(String key) throws Exception {
-        // First check local store
+        //debug - shows the verse number key
+        //System.out.println("\n[Read Operation] Key: " + key);
+
         if (keyValueStore.containsKey(key)) {
+            //debug
+            //System.out.println("Found in local store");
             return keyValueStore.get(key);
         }
 
-        // If not found locally, query the network
+        //debug
+        //System.out.println("Not found locally, querying network");han
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
+        //debug
+        //System.out.println("Closest nodes found: " + closestNodes.size());
 
-        // Try direct reads first
-        for (KeyValuePair node : closestNodes) {
-            try {
-                String[] parts = node.getValue().split(":");
-                InetAddress address = InetAddress.getByName(parts[0]);
-                int port = Integer.parseInt(parts[1]);
-                String tID = generateTransactionID();
-                String request = tID + " R " + formatString(key);
-                String response = sendRequestWithRetries(request, address, port);
+        String result = (!relayStack.isEmpty()) ? tryRelayRead(key, closestNodes) : tryDirectRead(key, closestNodes);
+        if (result == null && closestNodes.size() > 0) {
 
-                if (response != null && response.startsWith(tID + " S Y ")) {
-                    String value = extractValue(response, " S Y ");
-                    if (value != null) {
-                        // Cache the value locally
-                        keyValueStore.put(key, value);
-                        return value;
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("Error reading from node " + node.getKey() + ": " + e.getMessage());
-            }
+            // attempt again
+            //debug
+           // System.out.println("Initial read failed, expanding search...");
+            closestNodes = findClosestAddresses(keyHash, 3, true);
+            result = tryDirectRead(key, closestNodes);
         }
 
-        // If direct reads fail, try with relay nodes if available
-        if (!relayStack.isEmpty()) {
-            String innerMsg = generateTransactionID() + " R " + formatString(key);
-            String request = innerMsg;
-
-            // Build relay message stack
-            for (String relay : relayStack) {
-                String tID = generateTransactionID();
-                request = tID + " V " + relay + " " + request;
-            }
-
-            // Send to closest node
-            if (!closestNodes.isEmpty()) {
-                KeyValuePair firstNode = closestNodes.get(0);
-                String[] parts = firstNode.getValue().split(":");
-                InetAddress address = InetAddress.getByName(parts[0]);
-                int port = Integer.parseInt(parts[1]);
-                String response = sendRequestWithRetries(request, address, port);
-
-                if (response != null && response.contains(" S Y ")) {
-                    String value = extractValue(response, " S Y ");
-                    if (value != null) {
-                        keyValueStore.put(key, value);
-                        return value;
-                    }
-                }
-            }
+        if (result != null) {
+            keyValueStore.put(key, result);
+            //debug
+            //System.out.println("SUCCESS: Retrieved " + key);
+            return result;
         }
 
-        System.err.println("Failed to read " + key + " after multiple attempts");
+        System.out.println("Failed to read " + key + " after " + MAX_RETRIES + " attempts");
         return null;
-
     }
 
 
@@ -344,10 +284,6 @@ public class Node implements NodeInterface {
 
 
     private String sendRequestWithRetries(String request, InetAddress address, int port) throws Exception {
-        if (shouldDropPacket()) {
-            System.out.println("Simulated packet drop for request: " + request);
-            return null;
-        }
         byte[] requestData = request.getBytes(StandardCharsets.UTF_8);
         DatagramPacket packet = new DatagramPacket(requestData, requestData.length, address, port);
         byte[] buffer = new byte[1024];
@@ -392,21 +328,14 @@ public class Node implements NodeInterface {
     }
 
 
-    private Set<String> processedTransactionIDs = new HashSet<>();
-
     private void processMessage(String message, InetAddress senderAddress, int senderPort) throws Exception {
         if (message.length() < 4) return;
-        String[] parts = message.split(" ", 2);
+        String[] parts = message.split(" ", 3);
         String tID = parts[0];
-        if (processedTransactionIDs.contains(tID)) return; // Ignore duplicates
-        processedTransactionIDs.add(tID);
-        // Clear cache periodically to prevent memory growth
-        if (processedTransactionIDs.size() > 1000) processedTransactionIDs.clear();
-
-        parts = message.split(" ", 3);
         String type = parts[1];
         String mess = parts.length > 2 ? parts[2] : "";
 
+        // all cases
         switch (type) {
             case "G": handleNameRequest(tID, senderAddress, senderPort); break;
             case "H": handleNameResponse(tID, mess, senderAddress, senderPort); break;
@@ -438,9 +367,9 @@ public class Node implements NodeInterface {
         String response = sendRequestWithRetries(tIDNew + " G ", senderAddress, senderPort);
         if (response != null && response.startsWith(tIDNew + " H ")) {
             String senderNodeName = response.substring(tIDNew.length() + 3).trim();
-            String key = "N:" + senderNodeName;
-            keyValueStore.put(key, nodeAddress);
-            migrateDataIfNeeded(key, nodeAddress); // Migrate data if needed
+            keyValueStore.put("N:" + senderNodeName, nodeAddress);
+            //System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
+            // Force a nearest request to discover more nodes
             byte[] selfHash = HashID.computeHashID("N:" + nodeName);
             findClosestAddresses(selfHash, 5, true); // Bootstrap with more nodes
         }
@@ -462,10 +391,6 @@ public class Node implements NodeInterface {
         String targetNode = parts[0];
         String innerMessage = parts[1];
 
-        // Validate inner message type
-        String[] innerParts = innerMessage.split(" ", 2);
-        if (innerParts.length < 2 || !"GNERWC".contains(innerParts[1])) return;
-
         String targetAddress = keyValueStore.get("N:" + targetNode);
         if (targetAddress == null) return;
 
@@ -477,7 +402,7 @@ public class Node implements NodeInterface {
         DatagramPacket forwardPacket = new DatagramPacket(forwardData, forwardData.length, address, port);
         socket.send(forwardPacket);
 
-        if ("GNERWC".contains(innerParts[1])) {
+        if ("GNERWC".contains(innerMessage.split(" ")[1])) {
             byte[] buffer = new byte[1024];
             DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
             socket.setSoTimeout(TIMEOUT_MS);
@@ -487,16 +412,9 @@ public class Node implements NodeInterface {
                 String relayResponse = tID + " " + response.split(" ", 2)[1];
                 sendResponse(relayResponse, senderAddress, senderPort);
             } catch (SocketTimeoutException e) {
-                // No response, do nothing
+
             }
         }
-    }
-
-
-    private boolean shouldDropPacket() {
-        // Use deterministic seed for reproducibility
-        Random random = new Random(12345); // Fixed seed for testing
-        return random.nextDouble() < 0.1; // 10% chance to drop
     }
 
     private void handleKeyExistenceRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
@@ -574,10 +492,6 @@ public class Node implements NodeInterface {
     }
 
     private void sendResponse(String response, InetAddress address, int port) throws IOException {
-        if (shouldDropPacket()) {
-            System.out.println("Simulated packet drop for response: " + response);
-            return;
-        }
         byte[] responseData = response.getBytes(StandardCharsets.UTF_8);
         DatagramPacket packet = new DatagramPacket(responseData, responseData.length, address, port);
         socket.send(packet);
@@ -587,54 +501,28 @@ public class Node implements NodeInterface {
         return findClosestAddresses(targetHashID, limit, false);
     }
 
-
-    private void cleanupStore() {
-        keyValueStore.entrySet().removeIf(entry -> {
-            if (entry.getKey().startsWith("N:") && !entry.getKey().equals("N:" + nodeName)) {
-                try {
-                    return !isActive(entry.getKey().substring(2));
-                } catch (Exception e) {
-                    return true; // Remove if isActive fails
-                }
-            }
-            return false;
-        });
-    }
-
     private List<KeyValuePair> findClosestAddresses(byte[] targetHashID, int limit, boolean forceRefresh) throws Exception {
-        Map<Integer, List<KeyValuePair>> byDistance = new HashMap<>();
-
-        // Include self
+        List<KeyValuePair> closest = new ArrayList<>();
         if (nodeName != null) {
             byte[] selfHash = HashID.computeHashID("N:" + nodeName);
             int distance = calculateDistance(selfHash, targetHashID);
             String selfAddress = InetAddress.getLocalHost().getHostAddress() + ":" + socket.getLocalPort();
-            byDistance.computeIfAbsent(distance, k -> new ArrayList<>())
-                    .add(new KeyValuePair("N:" + nodeName, selfAddress, distance));
+            closest.add(new KeyValuePair("N:" + nodeName, selfAddress, distance));
         }
 
-        // Include known nodes
         for (Map.Entry<String, String> entry : keyValueStore.entrySet()) {
-            if (entry.getKey().startsWith("N:") && !entry.getKey().equals("N:" + nodeName)) {
+            if (entry.getKey().startsWith("N:")) {
                 byte[] nodeHash = HashID.computeHashID(entry.getKey());
                 int distance = calculateDistance(nodeHash, targetHashID);
-                List<KeyValuePair> pairs = byDistance.computeIfAbsent(distance, k -> new ArrayList<>());
-                if (pairs.size() < 3) { // Limit to 3 per distance
-                    pairs.add(new KeyValuePair(entry.getKey(), entry.getValue(), distance));
-                }
+                closest.add(new KeyValuePair(entry.getKey(), entry.getValue(), distance));
             }
         }
 
-        // Collect and sort results
-        List<KeyValuePair> result = new ArrayList<>();
-        for (List<KeyValuePair> pairs : byDistance.values()) {
-            result.addAll(pairs);
-        }
-        Collections.sort(result);
+        Collections.sort(closest);
+        if (closest.size() > limit) closest = closest.subList(0, limit);
 
-        // Active mapping if needed
-        if ((result.size() < limit || forceRefresh) && !result.isEmpty()) {
-            KeyValuePair node = result.get(0);
+        if ((closest.size() < limit || forceRefresh) && !closest.isEmpty()) {
+            KeyValuePair node = closest.get(0);
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
@@ -642,75 +530,59 @@ public class Node implements NodeInterface {
             String request = tID + " N " + byteArrayToHexString(targetHashID);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null && response.startsWith(tID + " O ")) {
-                String payload = response.substring(tID.length() + 3).trim();
+                String payload = response.substring(tID.length() + 3).trim(); // e.g., "0 N:node1 1 10.200.51.19:20114"
                 int i = 0;
                 while (i < payload.length()) {
-                    try {
-                        int keyCountEnd = payload.indexOf(" ", i);
-                        if (keyCountEnd == -1) break;
-                        int keyCount = Integer.parseInt(payload.substring(i, keyCountEnd));
-                        int keyStart = keyCountEnd + 1;
-                        int keyEnd = keyStart;
-                        for (int spaces = 0; spaces <= keyCount && keyEnd < payload.length(); keyEnd++) {
-                            if (payload.charAt(keyEnd) == ' ') spaces++;
-                        }
-                        if (keyEnd >= payload.length()) break;
-                        String key = payload.substring(keyStart, keyEnd - 1);
-                        int valueCountEnd = payload.indexOf(" ", keyEnd);
-                        if (valueCountEnd == -1) break;
-                        int valueCount = Integer.parseInt(payload.substring(keyEnd, valueCountEnd));
-                        int valueStart = valueCountEnd + 1;
-                        int valueEnd = valueStart;
-                        for (int spaces = 0; spaces <= valueCount && valueEnd < payload.length(); valueEnd++) {
-                            if (payload.charAt(valueEnd) == ' ') spaces++;
-                        }
-                        if (valueEnd > payload.length()) valueEnd = payload.length();
-                        String value = payload.substring(valueStart, valueEnd - 1);
-                        if (key.startsWith("N:") && value.matches("\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+")) {
-                            byte[] nodeHash = HashID.computeHashID(key);
-                            int distance = calculateDistance(nodeHash, targetHashID);
-                            List<KeyValuePair> pairs = byDistance.computeIfAbsent(distance, k -> new ArrayList<>());
-                            if (pairs.size() < 3) {
-                                pairs.add(new KeyValuePair(key, value, distance));
-                                keyValueStore.put(key, value);
-                            }
-                        }
-                        i = valueEnd;
-                    } catch (Exception e) {
-                        break;
+                    // Extract key
+                    int keyCountEnd = payload.indexOf(" ", i);
+                    if (keyCountEnd == -1) break;
+                    int keyCount = Integer.parseInt(payload.substring(i, keyCountEnd));
+                    int keyStart = keyCountEnd + 1;
+                    int keyEnd = keyStart;
+                    for (int spaces = 0; spaces <= keyCount && keyEnd < payload.length(); keyEnd++) {
+                        if (payload.charAt(keyEnd) == ' ') spaces++;
                     }
+                    if (keyEnd >= payload.length()) break;
+                    String key = payload.substring(keyStart, keyEnd - 1); // Exclude trailing space
+
+                    // Extract value
+                    int valueCountEnd = payload.indexOf(" ", keyEnd);
+                    if (valueCountEnd == -1) break;
+                    int valueCount = Integer.parseInt(payload.substring(keyEnd, valueCountEnd));
+                    int valueStart = valueCountEnd + 1;
+                    int valueEnd = valueStart;
+                    for (int spaces = 0; spaces <= valueCount && valueEnd < payload.length(); valueEnd++) {
+                        if (payload.charAt(valueEnd) == ' ') spaces++;
+                    }
+                    if (valueEnd > payload.length()) valueEnd = payload.length();
+                    String value = payload.substring(valueStart, valueEnd - 1); // Exclude trailing space
+
+                    if (key.startsWith("N:") && value.matches("\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+")) {
+                        keyValueStore.put(key, value);
+                    } else {
+                        System.out.println("Invalid node address in response: " + key + " -> " + value);
+                    }
+                    i = valueEnd;
                 }
-                // Rebuild result after active mapping
-                result.clear();
+                closest.clear();
                 if (nodeName != null) {
                     byte[] selfHash = HashID.computeHashID("N:" + nodeName);
                     int distance = calculateDistance(selfHash, targetHashID);
                     String selfAddress = InetAddress.getLocalHost().getHostAddress() + ":" + socket.getLocalPort();
-                    byDistance.computeIfAbsent(distance, k -> new ArrayList<>())
-                            .add(new KeyValuePair("N:" + nodeName, selfAddress, distance));
+                    closest.add(new KeyValuePair("N:" + nodeName, selfAddress, distance));
                 }
                 for (Map.Entry<String, String> entry : keyValueStore.entrySet()) {
-                    if (entry.getKey().startsWith("N:") && !entry.getKey().equals("N:" + nodeName)) {
+                    if (entry.getKey().startsWith("N:")) {
                         byte[] nodeHash = HashID.computeHashID(entry.getKey());
                         int distance = calculateDistance(nodeHash, targetHashID);
-                        List<KeyValuePair> pairs = byDistance.computeIfAbsent(distance, k -> new ArrayList<>());
-                        if (pairs.size() < 3) {
-                            pairs.add(new KeyValuePair(entry.getKey(), entry.getValue(), distance));
-                        }
+                        closest.add(new KeyValuePair(entry.getKey(), entry.getValue(), distance));
                     }
                 }
-                result.clear();
-                for (List<KeyValuePair> pairs : byDistance.values()) {
-                    result.addAll(pairs);
-                }
-                Collections.sort(result);
+                Collections.sort(closest);
             }
         }
-        return result.size() <= limit ? result : result.subList(0, limit);
+        return closest.size() <= limit ? closest : closest.subList(0, limit);
     }
-
-    // Overload for convenience
-
     private String formatString(String str) {
         return countSpaces(str) + " " + str + " ";
     }
