@@ -244,7 +244,7 @@ public class Node implements NodeInterface {
 
 
 
-    // UDP - HANDLE PACKET loss
+    // UDP - HANDLE PACKET loss or retry communication with the node.
     private String tryBruteForceRead(String key) throws Exception {
         for (Map.Entry<String, String> entry : keyValueStore.entrySet()) {
             if (entry.getKey().startsWith("N:")) {
@@ -285,7 +285,6 @@ public class Node implements NodeInterface {
                                     if (valueParts.length > 1) {
                                         String value = valueParts[1].trim();
                                         if (!value.isEmpty()) {
-                                            System.out.println("SUCCESS via brute force: " + key);
                                             return value;
                                         }
                                     }
@@ -548,22 +547,11 @@ public class Node implements NodeInterface {
         InetAddress address = InetAddress.getByName(addrParts[0]);
         int port = Integer.parseInt(addrParts[1]);
 
-        byte[] forwardData = innerMessage.getBytes(StandardCharsets.UTF_8);
-        DatagramPacket forwardPacket = new DatagramPacket(forwardData, forwardData.length, address, port);
-        socket.send(forwardPacket);
+        String response = sendRequestWithRetries(innerMessage, address, port);
+        if (response != null && "GNERWC".contains(innerMessage.split(" ")[1])) {
 
-        if ("GNERWC".contains(innerMessage.split(" ")[1])) {
-            byte[] buffer = new byte[1024];
-            DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
-            socket.setSoTimeout(TIMEOUT_MS);
-            try {
-                socket.receive(responsePacket);
-                String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
-                String relayResponse = tID + " " + response.split(" ", 2)[1];
-                sendResponse(relayResponse, senderAddress, senderPort);
-            } catch (SocketTimeoutException e) {
-
-            }
+            String relayResponse = tID + " " + response.split(" ", 2)[1];
+            sendResponse(relayResponse, senderAddress, senderPort);
         }
     }
 
@@ -611,19 +599,28 @@ public class Node implements NodeInterface {
         sendResponse(response, senderAddress, senderPort);
     }
 
+
+    // cas test case
     private void handleCASRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
         String[] parts = mess.split(" ", 6);
-        if (parts.length < 6) return;
+        if (parts.length < 6) {
+            sendResponse(tID + " D X", senderAddress, senderPort);
+            return;
+        }
         String key = extractFormattedValue(parts[0] + " " + parts[1]);
         String currentValue = extractFormattedValue(parts[2] + " " + parts[3]);
         String newValue = extractFormattedValue(parts[4] + " " + parts[5]);
+
         byte[] keyHash = HashID.computeHashID(key);
-        boolean responsible = findClosestAddresses(keyHash, 3).stream().anyMatch(p -> p.getKey().equals("N:" + nodeName));
+        List<KeyValuePair> closest = findClosestAddresses(keyHash, 3);
+        boolean responsible = closest.stream().anyMatch(p -> p.getKey().equals("N:" + nodeName));
+
         char status;
         if (responsible) {
-            synchronized (keyValueStore) {
-                if (keyValueStore.containsKey(key)) {
-                    if (keyValueStore.get(key).equals(currentValue)) {
+            synchronized (key.intern()) { // Lock on the key string
+                String storedValue = keyValueStore.get(key);
+                if (storedValue != null) {
+                    if (storedValue.equals(currentValue)) {
                         keyValueStore.put(key, newValue);
                         status = 'R';
                     } else {
