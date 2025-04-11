@@ -178,7 +178,8 @@ public class Node implements NodeInterface {
 
     //read(key) Retrieves the value associated with the key, if it exists in the store
     public String read(String key) throws Exception {
-        System.out.println("\n[Read Operation] Key: " + key);
+        //debug - shows the verse number key
+        //System.out.println("\n[Read Operation] Key: " + key);
 
         if (keyValueStore.containsKey(key)) {
             //debug
