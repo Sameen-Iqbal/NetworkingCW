@@ -37,12 +37,13 @@ public class relayTest {
         tempSocket.send(packet);
         tempSocket.close();
 
-        Thread.sleep(100); // Give local nodes time to process
+        Thread.sleep(100);
         relay.handleIncomingMessages(500);
         target.handleIncomingMessages(500);
         requester.handleIncomingMessages(500);
 
         String result = requester.read("D:secret");
+        System.out.println("Read result: " + result);
         if ("Hidden Message".equals(result)) {
             System.out.println("PASS: Relay read request succeeded: " + result);
         } else {
@@ -65,6 +66,7 @@ public class relayTest {
         requester.handleIncomingMessages(500);
 
         result = target.read("D:secret");
+        System.out.println("Write result: " + result);
         if ("New Value".equals(result)) {
             System.out.println("PASS: Relay write request succeeded: " + result);
         } else {

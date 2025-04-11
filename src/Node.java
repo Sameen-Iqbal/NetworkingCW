@@ -392,7 +392,7 @@ public class Node implements NodeInterface {
         String[] parts = mess.split(" ", 2);
         if (parts.length < 2) return;
         String targetNode = parts[0];
-        String innerMessage = parts[1];
+        String innerMessage = parts[1].trim();
 
         String targetAddress = keyValueStore.get("N:" + targetNode);
         if (targetAddress == null) return;
@@ -401,25 +401,39 @@ public class Node implements NodeInterface {
         InetAddress address = InetAddress.getByName(addrParts[0]);
         int port = Integer.parseInt(addrParts[1]);
 
+        String[] innerParts = innerMessage.split(" ", 3);
+        if (innerParts.length < 2) return;
+        String innerTID = innerParts[0];
+        String innerType = innerParts[1];
+
+        // Forward the request
         byte[] forwardData = innerMessage.getBytes(StandardCharsets.UTF_8);
         DatagramPacket forwardPacket = new DatagramPacket(forwardData, forwardData.length, address, port);
         socket.send(forwardPacket);
 
-        if ("GNERWC".contains(innerMessage.split(" ")[1])) {
+        // Handle response if it’s a request type
+        if ("GNERWC".contains(innerType)) {
             byte[] buffer = new byte[1024];
             DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
             socket.setSoTimeout(TIMEOUT_MS);
-            try {
-                socket.receive(responsePacket);
-                String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
-                String relayResponse = tID + " " + response.split(" ", 2)[1];
-                sendResponse(relayResponse, senderAddress, senderPort);
-            } catch (SocketTimeoutException e) {
-
+            for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    socket.receive(responsePacket);
+                    String response = new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
+                    if (response.startsWith(innerTID)) {
+                        String relayResponse = tID + " " + response.split(" ", 2)[1];
+                        sendResponse(relayResponse, senderAddress, senderPort);
+                        return;
+                    }
+                } catch (SocketTimeoutException e) {
+                    System.out.println("Timeout waiting for response from " + address + ":" + port + " on attempt " + (attempt + 1));
+                    if (attempt < MAX_RETRIES - 1) {
+                        socket.send(forwardPacket); // Retry sending
+                    }
+                }
             }
         }
     }
-
     private void handleKeyExistenceRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
         String key = extractFormattedValue(mess);
         boolean exists = keyValueStore.containsKey(key);
