@@ -181,7 +181,8 @@ public class Node implements NodeInterface {
         System.out.println("\n[Read Operation] Key: " + key);
 
         if (keyValueStore.containsKey(key)) {
-            System.out.println("Found in local store");
+            //debug
+            //System.out.println("Found in local store");
             return keyValueStore.get(key);
         }
 
@@ -228,7 +229,7 @@ public class Node implements NodeInterface {
             String request = tID + " R " + formatString(key);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null) {
-                System.out.println("Response from " + address + ":" + port + ": " + response);
+                //System.out.println("Response from " + address + ":" + port + ": " + response);
                 if (response.startsWith(tID + " S Y ")) {
                     String value = extractValue(response, " S Y ");
                     if (value != null && !value.isEmpty()) {
@@ -237,11 +238,11 @@ public class Node implements NodeInterface {
                         return value;
                     }
                 } else if (response.startsWith(tID + " S N ")) {
-                    System.out.println("Key not found at node");
+                    //System.out.println("Key not found at node");
                 } else if (response.startsWith(tID + " S ? ")) {
-                    System.out.println("Node not responsible");
+                    //System.out.println("Node not responsible");
                 } else {
-                    System.out.println("Unexpected response format");
+                    //System.out.println("Unexpected response format");
                 }
             }
         }
@@ -267,7 +268,7 @@ public class Node implements NodeInterface {
             if (response.contains(" S Y ")) {
                 String value = extractValue(response, " S Y ");
                 if (value != null && !value.isEmpty()) {
-                    System.out.println("Parsed value: " + value);
+                    //System.out.println("Parsed value: " + value);
                     return value;
                 }
             }
