@@ -388,52 +388,89 @@ public class Node implements NodeInterface {
         sendResponse(response.toString(), senderAddress, senderPort);
     }
 
-    private void handleRelayMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
-        String[] parts = mess.split(" ", 2);
-        if (parts.length < 2) return;
-        String targetNode = parts[0];
-        String innerMessage = parts[1].trim();
+    private void handleRelayMessage(String transactionID, String message, InetAddress senderAddress, int senderPort) {
+        try {
+            // Parse the relay message: TID V nodeName enclosedMessage
+            String[] parts = message.split(" ", 3);
+            if (parts.length < 3) {
+                System.err.println("Malformed relay message: " + message);
+                return;
+            }
 
-        String targetAddress = keyValueStore.get("N:" + targetNode);
-        if (targetAddress == null) return;
+            String targetNodeName = parts[1];
+            String enclosedMessage = parts[2];
 
-        String[] addrParts = targetAddress.split(":");
-        InetAddress address = InetAddress.getByName(addrParts[0]);
-        int port = Integer.parseInt(addrParts[1]);
+            // Look up the target node's address
+            String nodeAddress = keyValueStore.get("N:" + targetNodeName);
+            if (nodeAddress == null) {
+                // We don't know this node, try to discover it
+                byte[] nodeHash = HashID.computeHashID("N:" + targetNodeName);
+                List<KeyValuePair> closestNodes = findClosestAddresses(nodeHash, 3);
 
-        String[] innerParts = innerMessage.split(" ", 3);
-        if (innerParts.length < 2) return;
-        String innerTID = innerParts[0];
-        String innerType = innerParts[1];
-
-        // Forward the request
-        byte[] forwardData = innerMessage.getBytes(StandardCharsets.UTF_8);
-        DatagramPacket forwardPacket = new DatagramPacket(forwardData, forwardData.length, address, port);
-        socket.send(forwardPacket);
-
-        // Handle response if it’s a request type
-        if ("GNERWC".contains(innerType)) {
-            byte[] buffer = new byte[1024];
-            DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
-            socket.setSoTimeout(TIMEOUT_MS);
-            for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                try {
-                    socket.receive(responsePacket);
-                    String response = new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
-                    if (response.startsWith(innerTID)) {
-                        String relayResponse = tID + " " + response.split(" ", 2)[1];
-                        sendResponse(relayResponse, senderAddress, senderPort);
-                        return;
+                // Check if we found the node
+                for (KeyValuePair pair : closestNodes) {
+                    if (pair.getKey().equals("N:" + targetNodeName)) {
+                        nodeAddress = pair.getValue();
+                        break;
                     }
-                } catch (SocketTimeoutException e) {
-                    System.out.println("Timeout waiting for response from " + address + ":" + port + " on attempt " + (attempt + 1));
-                    if (attempt < MAX_RETRIES - 1) {
-                        socket.send(forwardPacket); // Retry sending
+                }
+
+                if (nodeAddress == null) {
+                    System.err.println("Cannot find relay target node: " + targetNodeName);
+                    return;
+                }
+            }
+
+            // Forward the enclosed message to the target node
+            String[] addrParts = nodeAddress.split(":");
+            InetAddress targetAddress = InetAddress.getByName(addrParts[0]);
+            int targetPort = Integer.parseInt(addrParts[1]);
+
+            byte[] forwardData = enclosedMessage.getBytes(StandardCharsets.UTF_8);
+            DatagramPacket forwardPacket = new DatagramPacket(
+                    forwardData, forwardData.length, targetAddress, targetPort);
+            socket.send(forwardPacket);
+
+            // Check if the enclosed message is a request that expects a response
+            if (enclosedMessage.length() >= 4 && enclosedMessage.charAt(2) == ' ') {
+                char messageType = enclosedMessage.charAt(3);
+                boolean isRequest = "GNERWC".indexOf(messageType) >= 0;
+
+                if (isRequest) {
+                    // Wait for the response from the target node
+                    byte[] buffer = new byte[1024];
+                    DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
+                    socket.setSoTimeout(5000);
+
+                    try {
+                        socket.receive(responsePacket);
+                        String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
+
+                        // Extract the response transaction ID and message type
+                        String[] responseParts = response.split(" ", 3);
+                        if (responseParts.length >= 2) {
+                            // Replace the transaction ID with our own for the relay
+                            String relayResponse = transactionID + " " + responseParts[1];
+                            if (responseParts.length > 2) {
+                                relayResponse += " " + responseParts[2];
+                            }
+
+                            // Send the response back to the original requester
+                            byte[] relayData = relayResponse.getBytes(StandardCharsets.UTF_8);
+                            DatagramPacket relayPacket = new DatagramPacket(
+                                    relayData, relayData.length, senderAddress, senderPort);
+                            socket.send(relayPacket);
+                        }
+                    } catch (SocketTimeoutException e) {
+                        System.out.println("Timeout waiting for relay response from " + targetNodeName);
                     }
                 }
             }
+        } catch (Exception e) {
+            System.err.println("Error handling relay message: " + e.getMessage());
         }
     }
+
     private void handleKeyExistenceRequest(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
         String key = extractFormattedValue(mess);
         boolean exists = keyValueStore.containsKey(key);
