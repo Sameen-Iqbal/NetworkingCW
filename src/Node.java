@@ -190,7 +190,7 @@ public class Node implements NodeInterface {
         //debug
         //System.out.println("Not found locally, querying network");
         byte[] keyHash = HashID.computeHashID(key);
-        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 5);
+        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
         //debug
         //System.out.println("Closest nodes found: " + closestNodes.size());
 
