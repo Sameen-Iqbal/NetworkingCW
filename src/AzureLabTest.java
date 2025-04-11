@@ -74,6 +74,20 @@ class AzureLabTest {
                 System.out.println(node.read(key));
             }
 
+
+            System.out.println("Letting other nodes know where we are");
+            boolean writeSuccess = node.write(nodeName, ipAddress + ":" + port);
+            if (writeSuccess) {
+                System.out.println("Successfully wrote node address to network");
+            } else {
+                System.out.println("Failed to write node address to network");
+            }
+            String readBack = node.read(nodeName);
+            System.out.println("Read back node address: " + readBack);
+
+            System.out.println("Handling incoming connections");
+            node.handleIncomingMessages(0);
+
             // Finally we will let other nodes know where we are
             // so that we can be contacted and can store data for others.
             System.out.println("Letting other nodes know where we are");

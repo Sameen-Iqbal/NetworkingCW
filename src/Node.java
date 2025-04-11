@@ -308,15 +308,19 @@ public class Node implements NodeInterface {
 
 
     public boolean write(String key, String value) throws Exception {
-        keyValueStore.put(key, value); // Store locally first
+        keyValueStore.put(key, value);
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
+        if (closestNodes.size() < 3) { // If we don’t know enough nodes
+            byte[] selfHash = HashID.computeHashID("N:" + nodeName);
+            findClosestAddresses(selfHash, 5, true); // Force broader discovery
+            closestNodes = findClosestAddresses(keyHash, 3); // Recalculate
+        }
         boolean success = false;
         for (KeyValuePair node : closestNodes) {
             String[] parts = node.getValue().split(":");
             InetAddress address = InetAddress.getByName(parts[0]);
             int port = Integer.parseInt(parts[1]);
-            // Skip if it's our own node
             String selfAddress = InetAddress.getLocalHost().getHostAddress() + ":" + socket.getLocalPort();
             if (node.getValue().equals(selfAddress)) continue;
 
@@ -330,10 +334,8 @@ public class Node implements NodeInterface {
                 System.out.println("Failed to write " + key + " to " + node.getValue() + ", response: " + response);
             }
         }
-        return success; // Only true if at least one remote node accepted it
+        return success;
     }
-
-
     private void processMessage(String message, InetAddress senderAddress, int senderPort) throws Exception {
         if (message.length() < 4) return;
         String[] parts = message.split(" ", 3);
