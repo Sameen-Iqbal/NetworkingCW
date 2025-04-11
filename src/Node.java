@@ -188,9 +188,9 @@ public class Node implements NodeInterface {
         }
 
         //debug
-        //System.out.println("Not found locally, querying network");
+        //System.out.println("Not found locally, querying network");han
         byte[] keyHash = HashID.computeHashID(key);
-        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 5);
+        List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 3);
         //debug
         //System.out.println("Closest nodes found: " + closestNodes.size());
 
@@ -211,9 +211,163 @@ public class Node implements NodeInterface {
             return result;
         }
 
+        // UDP handling
+        // try relay method - if cant find the node
+        result = tryAllNodesAsRelays(key);
+        if(result != null){
+            keyValueStore.put(key,result);
+            return result;
+        }
+
+        result = tryBruteForceRead(key);
+        if(result != null){
+            keyValueStore.put(key,result);
+            return result;
+
+        }
+
         System.out.println("Failed to read " + key + " after " + MAX_RETRIES + " attempts");
         return null;
     }
+
+
+
+    private List<String> getKnownNodes() {
+        List<String> nodes = new ArrayList<>();
+        for (String key : keyValueStore.keySet()) {
+            if (key.startsWith("N:")) {
+                nodes.add(key.substring(2)); // Remove "N:" prefix
+            }
+        }
+        return nodes;
+    }
+
+
+
+    // UDP - HANDLE PACKET loss
+    private String tryBruteForceRead(String key) throws Exception {
+        for (Map.Entry<String, String> entry : keyValueStore.entrySet()) {
+            if (entry.getKey().startsWith("N:")) {
+                String nodeAddress = entry.getValue();
+                String[] addrParts = nodeAddress.split(":");
+
+                try {
+                    InetAddress address = InetAddress.getByName(addrParts[0]);
+                    int port = Integer.parseInt(addrParts[1]);
+
+                    // Try multiple times with increasing timeouts
+                    for (int i = 0; i < 5; i++) {
+                        String txId = generateTransactionID();
+                        String request = txId + " R " + formatString(key);
+
+                        byte[] requestData = request.getBytes(StandardCharsets.UTF_8);
+                        DatagramPacket packet = new DatagramPacket(requestData, requestData.length, address, port);
+                        socket.send(packet);
+
+                        // Increasing timeout with each attempt
+                        int timeout = 2000 + (1000 * i);
+
+                        // Wait for response
+                        byte[] buffer = new byte[1024];
+                        DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
+                        socket.setSoTimeout(timeout);
+
+                        try {
+                            socket.receive(responsePacket);
+                            String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
+
+                            // Parse the response
+                            if (response.contains(" S Y ")) {
+                                String[] parts = response.split(" S Y ");
+                                if (parts.length > 1) {
+                                    String formatted = parts[1].trim();
+                                    String[] valueParts = formatted.split(" ", 2);
+                                    if (valueParts.length > 1) {
+                                        String value = valueParts[1].trim();
+                                        if (!value.isEmpty()) {
+                                            System.out.println("SUCCESS via brute force: " + key);
+                                            return value;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (SocketTimeoutException e) {
+                            // No response, try with longer timeout
+                        }
+
+                        // Small delay between attempts to avoid rate limiting
+                        Thread.sleep(100 + (i * 50));
+                    }
+                } catch (Exception e) {
+                    // Problem with this node, try next one
+                }
+            }
+        }
+
+        return null;
+        //test
+    }
+
+    private String tryAllNodesAsRelays(String key) throws Exception {
+        // Try each known node as a relay
+        for (String relayNode : getKnownNodes()) {
+            String relayAddress = keyValueStore.get("N:" + relayNode);
+            if (relayAddress == null) continue;
+
+            String[] addrParts = relayAddress.split(":");
+            try {
+                InetAddress address = InetAddress.getByName(addrParts[0]);
+                int port = Integer.parseInt(addrParts[1]);
+
+                // Send relay request
+                String outerTxId = generateTransactionID();
+                String innerTxId = generateTransactionID();
+
+                String relayRequest = outerTxId + " V " + relayNode + " " + innerTxId + " R " + formatString(key);
+
+                byte[] requestData = relayRequest.getBytes(StandardCharsets.UTF_8);
+                DatagramPacket packet = new DatagramPacket(requestData, requestData.length, address, port);
+                socket.send(packet);
+
+                // Wait for response with longer timeout
+                byte[] buffer = new byte[1024];
+                DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length);
+                socket.setSoTimeout(4000); // Longer timeout
+
+                try {
+                    socket.receive(responsePacket);
+                    String response = new String(responsePacket.getData(), 0, responsePacket.getLength());
+
+                    // Parse the response
+                    if (response.contains(" S Y ")) {
+                        // Extract value
+                        String[] parts = response.split(" S Y ");
+                        if (parts.length > 1) {
+                            String formatted = parts[1].trim();
+                            String[] valueParts = formatted.split(" ", 2);
+                            if (valueParts.length > 1) {
+                                String value = valueParts[1].trim();
+                                if (!value.isEmpty()) {
+                                    System.out.println("SUCCESS via relay " + relayNode + ": " + key);
+                                    return value;
+                                }
+                            }
+                        }
+                    }
+                } catch (SocketTimeoutException e) {
+                    // No response, try next relay
+                }
+
+                // Small delay to avoid rate limiting
+                Thread.sleep(50);
+            } catch (Exception e) {
+                // Problem with this relay, try next one
+            }
+        }
+
+        return null;
+    }
+
 
 
 
@@ -358,14 +512,16 @@ public class Node implements NodeInterface {
 
     private void handleInfoMessage(String tID, String mess, InetAddress senderAddress, int senderPort) throws Exception {
         System.out.println("Info from " + senderAddress + ":" + senderPort + ": " + mess);
-        // Bootstrap by querying this node for its name
         String nodeAddress = senderAddress.getHostAddress() + ":" + senderPort;
         String tIDNew = generateTransactionID();
         String response = sendRequestWithRetries(tIDNew + " G ", senderAddress, senderPort);
         if (response != null && response.startsWith(tIDNew + " H ")) {
             String senderNodeName = response.substring(tIDNew.length() + 3).trim();
             keyValueStore.put("N:" + senderNodeName, nodeAddress);
-            System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
+            //System.out.println("Discovered node: " + senderNodeName + " at " + nodeAddress);
+            // Force a nearest request to discover more nodes
+            byte[] selfHash = HashID.computeHashID("N:" + nodeName);
+            findClosestAddresses(selfHash, 5, true); // Bootstrap with more nodes
         }
     }
 
