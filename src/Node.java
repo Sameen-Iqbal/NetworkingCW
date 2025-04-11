@@ -524,20 +524,20 @@ public class Node implements NodeInterface {
             String request = tID + " N " + byteArrayToHexString(targetHashID);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null && response.startsWith(tID + " O ")) {
-                String[] partsResponse = response.split(" ");
-                int i = 2;
-                while (i + 3 < partsResponse.length) {
-                    String keyCount = partsResponse[i];
-                    String key = partsResponse[i + 1];
-                    String valueCount = partsResponse[i + 2];
-                    String value = partsResponse[i + 3];
-                    // breaks down the ip as digit, dot, digit, dot, digit, dot, colon, digit. for ip:port
+                String mess = response.substring(tID.length() + 3); // "0 N:node 1 10.200.51.19:20114 "
+                String[] pairs = mess.split("(?<=\\d) "); // Split after count
+                int i = 0;
+                while (i < pairs.length - 1) {
+                    String keyPart = pairs[i].trim();
+                    String valuePart = pairs[i + 1].trim();
+                    String key = extractFormattedValue(keyPart);
+                    String value = extractFormattedValue(valuePart);
                     if (key.startsWith("N:") && value.matches("\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+")) {
                         keyValueStore.put(key, value);
                     } else {
                         System.out.println("Invalid node address in response: " + key + " -> " + value);
                     }
-                    i += 4;
+                    i += 2;
                 }
                 closest.clear();
                 if (nodeName != null) {
@@ -558,7 +558,6 @@ public class Node implements NodeInterface {
         }
         return closest.size() <= limit ? closest : closest.subList(0, limit);
     }
-
     private String formatString(String str) {
         return countSpaces(str) + " " + str + " ";
     }
