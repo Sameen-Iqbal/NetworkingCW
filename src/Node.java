@@ -524,20 +524,39 @@ public class Node implements NodeInterface {
             String request = tID + " N " + byteArrayToHexString(targetHashID);
             String response = sendRequestWithRetries(request, address, port);
             if (response != null && response.startsWith(tID + " O ")) {
-                String mess = response.substring(tID.length() + 3); // "0 N:node 1 10.200.51.19:20114 "
-                String[] pairs = mess.split("(?<=\\d) "); // Split after count
+                String payload = response.substring(tID.length() + 3).trim(); // e.g., "0 N:node1 1 10.200.51.19:20114"
                 int i = 0;
-                while (i < pairs.length - 1) {
-                    String keyPart = pairs[i].trim();
-                    String valuePart = pairs[i + 1].trim();
-                    String key = extractFormattedValue(keyPart);
-                    String value = extractFormattedValue(valuePart);
+                while (i < payload.length()) {
+                    // Extract key
+                    int keyCountEnd = payload.indexOf(" ", i);
+                    if (keyCountEnd == -1) break;
+                    int keyCount = Integer.parseInt(payload.substring(i, keyCountEnd));
+                    int keyStart = keyCountEnd + 1;
+                    int keyEnd = keyStart;
+                    for (int spaces = 0; spaces <= keyCount && keyEnd < payload.length(); keyEnd++) {
+                        if (payload.charAt(keyEnd) == ' ') spaces++;
+                    }
+                    if (keyEnd >= payload.length()) break;
+                    String key = payload.substring(keyStart, keyEnd - 1); // Exclude trailing space
+
+                    // Extract value
+                    int valueCountEnd = payload.indexOf(" ", keyEnd);
+                    if (valueCountEnd == -1) break;
+                    int valueCount = Integer.parseInt(payload.substring(keyEnd, valueCountEnd));
+                    int valueStart = valueCountEnd + 1;
+                    int valueEnd = valueStart;
+                    for (int spaces = 0; spaces <= valueCount && valueEnd < payload.length(); valueEnd++) {
+                        if (payload.charAt(valueEnd) == ' ') spaces++;
+                    }
+                    if (valueEnd > payload.length()) valueEnd = payload.length();
+                    String value = payload.substring(valueStart, valueEnd - 1); // Exclude trailing space
+
                     if (key.startsWith("N:") && value.matches("\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+")) {
                         keyValueStore.put(key, value);
                     } else {
                         System.out.println("Invalid node address in response: " + key + " -> " + value);
                     }
-                    i += 2;
+                    i = valueEnd;
                 }
                 closest.clear();
                 if (nodeName != null) {
