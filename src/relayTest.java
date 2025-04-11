@@ -4,7 +4,6 @@ public class relayTest {
     public static void main(String[] args) throws Exception {
         System.out.println("Starting Relay Test...");
 
-        // Create three nodes
         Node requester = new Node();
         requester.setNodeName("N:requester");
         requester.openPort(20110);
@@ -17,9 +16,13 @@ public class relayTest {
         target.setNodeName("N:target");
         target.openPort(20112);
 
+        String vmIP = "10.216.34.173";
+
         // Bootstrap
-        relay.write("N:target", "10.216.34.173:20112");
-        requester.write("N:relay", "10.216.34.173:20111");
+        relay.write("N:target", vmIP + ":20112");
+        target.handleIncomingMessages(100);
+        requester.write("N:relay", vmIP + ":20111");
+        relay.handleIncomingMessages(100);
 
         // Test 1: Relay a Read Request
         target.write("D:secret", "Hidden Message");
@@ -30,13 +33,14 @@ public class relayTest {
         String relayMsg = tID + " V N:target " + innerMsg;
         DatagramSocket tempSocket = new DatagramSocket();
         byte[] data = relayMsg.getBytes("UTF-8");
-        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("10.216.34.173"), 20111);
+        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName(vmIP), 20111);
         tempSocket.send(packet);
         tempSocket.close();
 
-        relay.handleIncomingMessages(100);
-        target.handleIncomingMessages(100);
-        requester.handleIncomingMessages(100);
+        Thread.sleep(100); // Give local nodes time to process
+        relay.handleIncomingMessages(500);
+        target.handleIncomingMessages(500);
+        requester.handleIncomingMessages(500);
 
         String result = requester.read("D:secret");
         if ("Hidden Message".equals(result)) {
@@ -51,13 +55,14 @@ public class relayTest {
         String writeRelayMsg = writeTID + " V N:target " + writeInner;
         tempSocket = new DatagramSocket();
         data = writeRelayMsg.getBytes("UTF-8");
-        packet = new DatagramPacket(data, data.length, InetAddress.getByName("10.216.34.173"), 20111);
+        packet = new DatagramPacket(data, data.length, InetAddress.getByName(vmIP), 20111);
         tempSocket.send(packet);
         tempSocket.close();
 
-        relay.handleIncomingMessages(100);
-        target.handleIncomingMessages(100);
-        requester.handleIncomingMessages(100);
+        Thread.sleep(100);
+        relay.handleIncomingMessages(500);
+        target.handleIncomingMessages(500);
+        requester.handleIncomingMessages(500);
 
         result = target.read("D:secret");
         if ("New Value".equals(result)) {
