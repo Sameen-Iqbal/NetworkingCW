@@ -185,7 +185,8 @@ public class Node implements NodeInterface {
             return keyValueStore.get(key);
         }
 
-        System.out.println("Not found locally, querying network");
+        //debug
+        //System.out.println("Not found locally, querying network");
         byte[] keyHash = HashID.computeHashID(key);
         List<KeyValuePair> closestNodes = findClosestAddresses(keyHash, 4);
         //debug
@@ -231,7 +232,8 @@ public class Node implements NodeInterface {
                 if (response.startsWith(tID + " S Y ")) {
                     String value = extractValue(response, " S Y ");
                     if (value != null && !value.isEmpty()) {
-                        System.out.println("Parsed value: " + value);
+                        //debug
+                        //System.out.println("Parsed value: " + value);
                         return value;
                     }
                 } else if (response.startsWith(tID + " S N ")) {
