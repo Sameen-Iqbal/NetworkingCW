@@ -277,6 +277,11 @@ public class Node implements NodeInterface {
         return null;
     }
 
+    public void receiveMessage(String message, InetAddress senderAddress, int senderPort) throws Exception {
+        processMessage(message, senderAddress, senderPort);
+    }
+
+
 
 
     private String sendRequestWithRetries(String request, InetAddress address, int port) throws Exception {
